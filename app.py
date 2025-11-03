@@ -14,13 +14,23 @@ import getpass  # 用于隐藏密码输入
 from threading import Thread
 from http.server import BaseHTTPRequestHandler, HTTPServer
 
+
+DEBUG = os.environ.get("LOCAL_DEBUG", False)
+PASSWD = os.environ.get("PASSWD", '')
+
+
+def write_log(*args, **kwargs):
+    if DEBUG:
+        print(*args, **kwargs)
+
+
 # 加密相关（使用 cryptography 库）
 try:
     from cryptography.hazmat.primitives import hashes
     from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
     from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 except ImportError:
-    print("请安装 cryptography: pip install cryptography")
+    write_log("请安装 cryptography: pip install cryptography")
     exit(1)
 
 # 默认配置
@@ -63,7 +73,7 @@ def derive_key(password: str, salt: bytes) -> bytes:
 # 加密明文到密文
 def encrypt_data(plain_file: str, encrypted_file: str, password: str) -> bool:
     if not os.path.exists(plain_file):
-        print(f"明文文件 {plain_file} 不存在！")
+        write_log(f"明文文件 {plain_file} 不存在！")
         return False
     
     with open(plain_file, 'r', encoding='utf-8') as f:
@@ -79,20 +89,20 @@ def encrypt_data(plain_file: str, encrypted_file: str, password: str) -> bool:
     with open(encrypted_file, 'wb') as f:
         f.write(salt + nonce + ct)
     
-    print(f"加密成功：{encrypted_file}")
+    write_log(f"加密成功：{encrypted_file}")
     return True
 
 # 解密密文返回 dict
 def decrypt_data(encrypted_file: str, password: str) -> dict | None:
     if not os.path.exists(encrypted_file):
-        print(f"密文文件 {encrypted_file} 不存在！")
+        write_log(f"密文文件 {encrypted_file} 不存在！")
         return None
     
     with open(encrypted_file, 'rb') as f:
         file_data = f.read()
     
     if len(file_data) < 44:
-        print("密文文件损坏！")
+        write_log("密文文件损坏！")
         return None
     
     salt = file_data[:16]
@@ -104,10 +114,10 @@ def decrypt_data(encrypted_file: str, password: str) -> dict | None:
     try:
         plaintext = aesgcm.decrypt(nonce, ciphertext_with_tag, None).decode('utf-8')
         config = json.loads(plaintext)
-        print(f"解密成功，从 {encrypted_file} 加载配置")
+        write_log(f"解密成功，从 {encrypted_file} 加载配置")
         return config
     except Exception as e:
-        print(f"解密失败：密码错误或文件损坏！({e})")
+        write_log(f"解密失败：密码错误或文件损坏！({e})")
         return None
 
 # 加载配置
@@ -117,8 +127,9 @@ def load_config(encrypted_file: str, plain_file: str):
     # 优先加载密文
     if os.path.exists(encrypted_file):
         while True:
-            password = '123456'
-            if not password:
+            if PASSWD:
+                password = PASSWD
+            else:
                 password = getpass.getpass(f"请输入密文文件 [{encrypted_file}] 的解密密码：")
             file_config = decrypt_data(encrypted_file, password)
             if file_config:
@@ -132,29 +143,29 @@ def load_config(encrypted_file: str, plain_file: str):
                         else:
                             config[upper_key] = value
                 return config
-            print("密码错误，请重试！")
+            write_log("密码错误，请重试！")
     
     # 回退明文
     if os.path.exists(plain_file):
-        print(f"密文 [{encrypted_file}] 不存在，加载明文 [{plain_file}]")
+        write_log(f"密文 [{encrypted_file}] 不存在，加载明文 [{plain_file}]")
         choice = input("是否加密明文到密文？(y/n)：").strip().lower()
         if choice == 'y':
             password = getpass.getpass("请输入加密密码：")
             password_confirm = getpass.getpass("确认密码：")
             if password != password_confirm:
-                print("密码不匹配，使用明文配置")
+                write_log("密码不匹配，使用明文配置")
             elif encrypt_data(plain_file, encrypted_file, password):
                 choice_del = input("是否删除明文文件？(y/n)：").strip().lower()
                 if choice_del == 'y':
                     os.remove(plain_file)
-                    print("明文已删除")
-                print("明文已加密，下次优先使用密文")
+                    write_log("明文已删除")
+                write_log("明文已加密，下次优先使用密文")
                 return load_config(encrypted_file, plain_file)  # 递归加载密文
-        print("使用明文配置（不安全）")
+        write_log("使用明文配置（不安全）")
         try:
             with open(plain_file, 'r', encoding='utf-8') as f:
                 file_config = json.load(f)
-            print(f"配置从明文 [{plain_file}] 加载成功")
+            write_log(f"配置从明文 [{plain_file}] 加载成功")
             for key, value in file_config.items():
                 upper_key = key.upper()
                 if upper_key in config:
@@ -166,9 +177,9 @@ def load_config(encrypted_file: str, plain_file: str):
                         config[upper_key] = value
             return config
         except Exception as e:
-            print(f"加载明文失败: {e}")
+            write_log(f"加载明文失败: {e}")
     
-    print("无配置文件，使用默认配置")
+    write_log("无配置文件，使用默认配置")
     return config
 
 # 命令行参数
@@ -183,10 +194,10 @@ if args.encrypt:
     password = getpass.getpass("请输入加密密码：")
     password_confirm = getpass.getpass("确认密码：")
     if password != password_confirm:
-        print("密码不匹配！")
+        write_log("密码不匹配！")
         exit(1)
     if encrypt_data(args.plain, args.encrypted, password):
-        print(f"加密完成！密文保存到 [{args.encrypted}]")
+        write_log(f"加密完成！密文保存到 [{args.encrypted}]")
     exit(0)
 
 # 正常运行：加载配置
@@ -215,12 +226,12 @@ PORT = int(config.get('SERVER_PORT') or config.get('PORT') or 8000)
 # --------------------- 以下为原脚本其余代码（完整复制，确保函数不变） ---------------------
 # Create running folder
 def create_directory():
-    print('\033c', end='')
+    write_log('\033c', end='')
     if not os.path.exists(FILE_PATH):
         os.makedirs(FILE_PATH)
-        print(f"{FILE_PATH} is created")
+        write_log(f"{FILE_PATH} is created")
     else:
-        print(f"{FILE_PATH} already exists")
+        write_log(f"{FILE_PATH} already exists")
 
 # Global variables
 npm_path = os.path.join(FILE_PATH, 'npm')
@@ -260,7 +271,7 @@ def delete_nodes():
         except:
             return None
     except Exception as e:
-        print(f"Error in delete_nodes: {e}")
+        write_log(f"Error in delete_nodes: {e}")
         return None
 
 # Clean up old files
@@ -275,7 +286,7 @@ def cleanup_old_files():
                 else:
                     os.remove(file_path)
         except Exception as e:
-            print(f"Error removing {file_path}: {e}")
+            write_log(f"Error removing {file_path}: {e}")
 
 class RequestHandler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -322,12 +333,12 @@ def download_file(file_name, file_url):
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
         
-        print(f"Download {file_name} successfully")
+        write_log(f"Download {file_name} successfully")
         return True
     except Exception as e:
         if os.path.exists(file_path):
             os.remove(file_path)
-        print(f"Download {file_name} failed: {e}")
+        write_log(f"Download {file_name} failed: {e}")
         return False
 
 # Get files for architecture
@@ -360,14 +371,14 @@ def authorize_files(file_paths):
         if os.path.exists(absolute_file_path):
             try:
                 os.chmod(absolute_file_path, 0o775)
-                print(f"Empowerment success for {absolute_file_path}: 775")
+                write_log(f"Empowerment success for {absolute_file_path}: 775")
             except Exception as e:
-                print(f"Empowerment failed for {absolute_file_path}: {e}")
+                write_log(f"Empowerment failed for {absolute_file_path}: {e}")
 
 # Configure Argo tunnel
 def argo_type():
     if not ARGO_AUTH or not ARGO_DOMAIN:
-        print("DOMAIN or DATA variable is empty, use quick tunnels")
+        write_log("ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels")
         return
 
     if "TunnelSecret" in ARGO_AUTH:
@@ -390,7 +401,7 @@ ingress:
         with open(os.path.join(FILE_PATH, 'tunnel.yml'), 'w') as f:
             f.write(tunnel_yml)
     else:
-        print("Use token connect to tunnel,please set the {PORT} in cfd")
+        write_log("Use token connect to tunnel,please set the {PORT} in cfd")
 
 # Execute shell command and return output
 def exec_cmd(command):
@@ -405,7 +416,7 @@ def exec_cmd(command):
         stdout, stderr = process.communicate()
         return stdout + stderr
     except Exception as e:
-        print(f"Error executing command: {e}")
+        write_log(f"Error executing command: {e}")
         return str(e)
 
 # Download and run necessary files
@@ -414,7 +425,7 @@ async def download_files_and_run():
     files_to_download = get_files_for_architecture(architecture)
     
     if not files_to_download:
-        print("Can't find a file for the current architecture")
+        write_log("Can't find a file for the current architecture")
         return
     
     # Download all files
@@ -424,7 +435,7 @@ async def download_files_and_run():
             download_success = False
     
     if not download_success:
-        print("Error downloading files")
+        write_log("Error downloading files")
         return
     
     # Authorize files
@@ -481,20 +492,20 @@ uuid: {UUID}"""
         tls_flag = '--tls' if NEZHA_PORT in ['443', '8443', '2096', '2087', '2083', '2053'] else ''
         cmd = f"nohup {npm_path} -s {NEZHA_SERVER}:{NEZHA_PORT} -p {NEZHA_KEY} {tls_flag} >/dev/null 2>&1 &"
         exec_cmd(cmd)
-        print('npm is running')
+        write_log('npm is running')
         time.sleep(1)
     elif NEZHA_SERVER and NEZHA_KEY:
         cmd = f"nohup {php_path} -c \"{os.path.join(FILE_PATH, 'config.yaml')}\" >/dev/null 2>&1 &"
         exec_cmd(cmd)
-        print('php is running')
+        write_log('php is running')
         time.sleep(1)
     else:
-        print('NEZHA variable is empty, skipping running')
+        write_log('NEZHA variable is empty, skipping running')
     
     # Run Xray
     cmd = f"nohup {web_path} -c {config_path} >/dev/null 2>&1 &"
     exec_cmd(cmd)
-    print('web is running')
+    write_log('web is running')
     time.sleep(1)
     
     # Run cloudflared
@@ -506,7 +517,7 @@ uuid: {UUID}"""
         else:
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log_path} --loglevel info --url http://localhost:{ARGO_PORT}"
         exec_cmd(f"nohup {bot_path} {args} >/dev/null 2>&1 &")
-        print('bot is running')
+        write_log('bot is running')
         time.sleep(2)
     
     time.sleep(5)
@@ -517,7 +528,7 @@ async def extract_domains():
     argo_domain = None
     if ARGO_AUTH and ARGO_DOMAIN:
         argo_domain = ARGO_DOMAIN
-        print(f'HOST: {argo_domain}')
+        write_log(f'HOST: {argo_domain}')
         await generate_links(argo_domain)
     else:
         try:
@@ -527,21 +538,21 @@ async def extract_domains():
                 match = re.search(r'https?://([^ ]*trycloudflare\.com)', line)
                 if match:
                     argo_domain = match.group(1)
-                    print(f'ArgoDomain: {argo_domain}')
+                    write_log(f'ArgoDomain: {argo_domain}')
                     await generate_links(argo_domain)
                     return
-            print('ArgoDomain not found, re-running bot')
+            write_log('ArgoDomain not found, re-running bot')
             if os.path.exists(boot_log_path):
                 os.remove(boot_log_path)
             exec_cmd('pkill -f "[b]ot"')
             time.sleep(1)
             args = f'tunnel --edge-ip-version auto --no-autoupdate --protocol http2 --logfile {boot_log_path} --loglevel info --url http://localhost:{ARGO_PORT}'
             exec_cmd(f'nohup {bot_path} {args} >/dev/null 2>&1 &')
-            print('bot is running.')
+            write_log('bot is running.')
             time.sleep(6)
             await extract_domains()
         except Exception as e:
-            print(f'Error reading boot.log: {e}')
+            write_log(f'Error reading boot.log: {e}')
 
 # Upload nodes
 def upload_nodes():
@@ -549,7 +560,7 @@ def upload_nodes():
         sub_url = f"{PROJECT_URL}/{SUB_PATH}"
         try:
             requests.post(f"{UPLOAD_URL}/api/add-subscriptions", json={"subscription": [sub_url]}, headers={"Content-Type": "application/json"})
-            print('Subscription uploaded successfully')
+            write_log('Subscription uploaded successfully')
         except:
             pass
     elif UPLOAD_URL and os.path.exists(list_path):
@@ -558,7 +569,7 @@ def upload_nodes():
         if nodes:
             try:
                 requests.post(f"{UPLOAD_URL}/api/add-nodes", data=json.dumps({"nodes": nodes}), headers={"Content-Type": "application/json"})
-                print('Nodes uploaded successfully')
+                write_log('Nodes uploaded successfully')
             except:
                 pass
 
@@ -575,9 +586,9 @@ def send_telegram():
             "text": f"**{escaped_name}节点推送通知**\n{message}",
             "parse_mode": "MarkdownV2"
         })
-        print('Telegram message sent successfully')
+        write_log('Telegram message sent successfully')
     except Exception as e:
-        print(f'Failed to send Telegram message: {e}')
+        write_log(f'Failed to send Telegram message: {e}')
 
 # Generate links
 async def generate_links(argo_domain):
@@ -597,8 +608,8 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     sub_txt = base64.b64encode(list_txt.encode('utf-8')).decode('utf-8')
     with open(sub_path, 'w', encoding='utf-8') as f:
         f.write(sub_txt)
-    print(sub_txt)
-    print(f"{sub_path} saved successfully")
+    write_log(sub_txt)
+    write_log(f"{sub_path} saved successfully")
     send_telegram()
     upload_nodes()
     return sub_txt
@@ -606,13 +617,13 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
 # Add keep-alive task
 def add_visit_task():
     if not AUTO_ACCESS or not PROJECT_URL:
-        print("Skipping adding automatic access task")
+        write_log("Skipping adding automatic access task")
         return
     try:
         requests.post('https://keep.gvrander.eu.org/add-url', json={"url": PROJECT_URL}, headers={"Content-Type": "application/json"})
-        print('automatic access task added successfully')
+        write_log('automatic access task added successfully')
     except Exception as e:
-        print(f'Failed to add URL: {e}')
+        write_log(f'Failed to add URL: {e}')
 
 # Clean files after 90s
 def clean_files():
@@ -624,7 +635,7 @@ def clean_files():
                     shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
             except:
                 pass
-        print('\033c', end='')
+        write_log('\033c', end='')
         print('App is running')
         print('Thank you for using this script, enjoy!')
     threading.Thread(target=_cleanup, daemon=True).start()
@@ -644,7 +655,7 @@ def run_server():
     server = HTTPServer(('0.0.0.0', PORT), RequestHandler)
     print(f"Server is running on port {PORT}")
     print("Running done！")
-    print("\nLogs will be delete in 90 seconds")
+    write_log("\nLogs will be delete in 90 seconds")
     server.serve_forever()
 
 def run_async():

@@ -203,10 +203,8 @@ parser.add_argument('--run-http', action='store_true', default=False, help='是�
 parser.add_argument('--plain', type=str, default=PLAIN_FILE_DEFAULT)
 parser.add_argument('--encrypted', type=str, default=ENCRYPTED_FILE_DEFAULT)
 args = parser.parse_args()
-if ENC_PATH:
-    encrypted= ENC_PATH
-else:
-    encrypted = args.encrypted
+if not ENC_PATH:
+    ENC_PATH = args.encrypted
 
 if args.encrypt:
     password = PASSWD or getpass.getpass("请输入加密密码：")

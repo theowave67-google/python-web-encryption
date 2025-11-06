@@ -1,28 +1,43 @@
+# -*- coding: utf-8 -*-
 import os
 import re
 import json
 import time
 import base64
 import shutil
-import asyncio
 import requests
 import platform
 import subprocess
 import threading
 import argparse
-import getpass  # 用于隐藏密码输入
+import getpass
+import logging
 from threading import Thread
-from http.server import BaseHTTPRequestHandler, HTTPServer
 
+# ==================== FastAPI ====================
+from fastapi import FastAPI, HTTPException
+from fastapi.responses import Response
 
-DEBUG = os.environ.get("LOCAL_DEBUG", False)
+# ==================== 原有代码 ====================
+
+DEBUG = os.environ.get("DDDEBUG", "false").lower() == "true"
 PASSWD = os.environ.get("PASSWD", '')
 
+# 配置 logging
+logger = logging.getLogger('app')
+logger.setLevel(logging.DEBUG)
+
+handler = logging.StreamHandler()
+handler.setLevel(logging.DEBUG if DEBUG else logging.CRITICAL)
+formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+handler.setFormatter(formatter)
+logger.addHandler(handler)
 
 def write_log(*args, **kwargs):
-    if DEBUG:
-        print(*args, **kwargs)
+    message = ' '.join(map(str, args))
+    logger.debug(message)
 
+write_log(f"current path: {os.getcwd()}")
 
 # 加密相关（使用 cryptography 库）
 try:
@@ -56,11 +71,11 @@ DEFAULT_CONFIG = {
     'PORT': 8000
 }
 
-# 默认路径（命令行可覆盖）
 PLAIN_FILE_DEFAULT = 'data.json'
 ENCRYPTED_FILE_DEFAULT = 'data.json.enc'
 
-# 生成 AES 密钥（从密码 + 盐）
+# ==================== 加密/解密函数 ====================
+
 def derive_key(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -70,45 +85,43 @@ def derive_key(password: str, salt: bytes) -> bytes:
     )
     return kdf.derive(password.encode())
 
-# 加密明文到密文
 def encrypt_data(plain_file: str, encrypted_file: str, password: str) -> bool:
     if not os.path.exists(plain_file):
         write_log(f"明文文件 {plain_file} 不存在！")
         return False
-    
+
     with open(plain_file, 'r', encoding='utf-8') as f:
         data = f.read().encode('utf-8')
-    
+
     salt = os.urandom(16)
     nonce = os.urandom(12)
     key = derive_key(password, salt)
     aesgcm = AESGCM(key)
-    ct = aesgcm.encrypt(nonce, data, None)  # ct = ciphertext + tag
-    
+    ct = aesgcm.encrypt(nonce, data, None)
+
     os.makedirs(os.path.dirname(encrypted_file), exist_ok=True) if os.path.dirname(encrypted_file) else None
     with open(encrypted_file, 'wb') as f:
         f.write(salt + nonce + ct)
-    
+
     write_log(f"加密成功：{encrypted_file}")
     return True
 
-# 解密密文返回 dict
 def decrypt_data(encrypted_file: str, password: str) -> dict | None:
     if not os.path.exists(encrypted_file):
         write_log(f"密文文件 {encrypted_file} 不存在！")
         return None
-    
+
     with open(encrypted_file, 'rb') as f:
         file_data = f.read()
-    
+
     if len(file_data) < 44:
         write_log("密文文件损坏！")
         return None
-    
+
     salt = file_data[:16]
     nonce = file_data[16:28]
     ciphertext_with_tag = file_data[28:]
-    
+
     key = derive_key(password, salt)
     aesgcm = AESGCM(key)
     try:
@@ -120,11 +133,11 @@ def decrypt_data(encrypted_file: str, password: str) -> dict | None:
         write_log(f"解密失败：密码错误或文件损坏！({e})")
         return None
 
-# 加载配置
+# ==================== 加载配置 ====================
+
 def load_config(encrypted_file: str, plain_file: str):
     config = DEFAULT_CONFIG.copy()
-    
-    # 优先加载密文
+
     if os.path.exists(encrypted_file):
         while True:
             if PASSWD:
@@ -144,8 +157,7 @@ def load_config(encrypted_file: str, plain_file: str):
                             config[upper_key] = value
                 return config
             write_log("密码错误，请重试！")
-    
-    # 回退明文
+
     if os.path.exists(plain_file):
         write_log(f"密文 [{encrypted_file}] 不存在，加载明文 [{plain_file}]")
         choice = input("是否加密明文到密文？(y/n)：").strip().lower()
@@ -160,7 +172,7 @@ def load_config(encrypted_file: str, plain_file: str):
                     os.remove(plain_file)
                     write_log("明文已删除")
                 write_log("明文已加密，下次优先使用密文")
-                return load_config(encrypted_file, plain_file)  # 递归加载密文
+                return load_config(encrypted_file, plain_file)
         write_log("使用明文配置（不安全）")
         try:
             with open(plain_file, 'r', encoding='utf-8') as f:
@@ -178,21 +190,22 @@ def load_config(encrypted_file: str, plain_file: str):
             return config
         except Exception as e:
             write_log(f"加载明文失败: {e}")
-    
+
     write_log("无配置文件，使用默认配置")
     return config
 
-# 命令行参数
+# ==================== 命令行参数 ====================
+
 parser = argparse.ArgumentParser(description="")
 parser.add_argument('--encrypt', action='store_true', help='仅加密明文到密文')
-parser.add_argument('--plain', type=str, default=PLAIN_FILE_DEFAULT, help='指定明文配置文件路径（默认 data.json）')
-parser.add_argument('--encrypted', type=str, default=ENCRYPTED_FILE_DEFAULT, help='指定密文配置文件路径（默认 data.json.enc）')
+parser.add_argument('--run-http', action='store_true', default=False, help='是否运行 HTTP 服务器')
+parser.add_argument('--plain', type=str, default=PLAIN_FILE_DEFAULT)
+parser.add_argument('--encrypted', type=str, default=ENCRYPTED_FILE_DEFAULT)
 args = parser.parse_args()
 
 if args.encrypt:
-    # 仅加密模式
-    password = getpass.getpass("请输入加密密码：")
-    password_confirm = getpass.getpass("确认密码：")
+    password = PASSWD or getpass.getpass("请输入加密密码：")
+    password_confirm = getpass.getpass("确认密码：") if not PASSWD else password
     if password != password_confirm:
         write_log("密码不匹配！")
         exit(1)
@@ -223,17 +236,8 @@ CHAT_ID = config['CHAT_ID']
 BOT_TOKEN = config['BOT_TOKEN']
 PORT = int(config.get('SERVER_PORT') or config.get('PORT') or 8000)
 
-# --------------------- 以下为原脚本其余代码（完整复制，确保函数不变） ---------------------
-# Create running folder
-def create_directory():
-    write_log('\033c', end='')
-    if not os.path.exists(FILE_PATH):
-        os.makedirs(FILE_PATH)
-        write_log(f"{FILE_PATH} is created")
-    else:
-        write_log(f"{FILE_PATH} already exists")
+# ==================== 全局路径 ====================
 
-# Global variables
 npm_path = os.path.join(FILE_PATH, 'npm')
 php_path = os.path.join(FILE_PATH, 'php')
 web_path = os.path.join(FILE_PATH, 'web')
@@ -243,38 +247,30 @@ list_path = os.path.join(FILE_PATH, 'list.txt')
 boot_log_path = os.path.join(FILE_PATH, 'boot.log')
 config_path = os.path.join(FILE_PATH, 'config.json')
 
-# Delete nodes
+# ==================== 业务函数 ====================
+
+def create_directory():
+    if not os.path.exists(FILE_PATH):
+        os.makedirs(FILE_PATH)
+        write_log(f"{FILE_PATH} is created")
+    else:
+        write_log(f"{FILE_PATH} already exists")
+
 def delete_nodes():
     try:
-        if not UPLOAD_URL:
+        if not UPLOAD_URL or not os.path.exists(sub_path):
             return
-
-        if not os.path.exists(sub_path):
-            return
-
-        try:
-            with open(sub_path, 'r') as file:
-                file_content = file.read()
-        except:
-            return None
-
+        with open(sub_path, 'r') as file:
+            file_content = file.read()
         decoded = base64.b64decode(file_content).decode('utf-8')
         nodes = [line for line in decoded.split('\n') if any(protocol in line for protocol in ['vless://', 'vmess://', 'trojan://', 'hysteria2://', 'tuic://'])]
-
-        if not nodes:
-            return
-
-        try:
-            requests.post(f"{UPLOAD_URL}/api/delete-nodes", 
+        if nodes:
+            requests.post(f"{UPLOAD_URL}/api/delete-nodes",
                           data=json.dumps({"nodes": nodes}),
                           headers={"Content-Type": "application/json"})
-        except:
-            return None
     except Exception as e:
         write_log(f"Error in delete_nodes: {e}")
-        return None
 
-# Clean up old files
 def cleanup_old_files():
     paths_to_delete = ['web', 'bot', 'npm', 'php', 'boot.log', 'list.txt']
     for file in paths_to_delete:
@@ -288,33 +284,6 @@ def cleanup_old_files():
         except Exception as e:
             write_log(f"Error removing {file_path}: {e}")
 
-class RequestHandler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == '/':
-            self.send_response(200)
-            self.send_header('Content-type', 'text/html')
-            self.end_headers()
-            self.wfile.write(b'Hello World')
-            
-        elif self.path == f'/{SUB_PATH}':
-            try:
-                with open(sub_path, 'rb') as f:
-                    content = f.read()
-                self.send_response(200)
-                self.send_header('Content-type', 'text/plain')
-                self.end_headers()
-                self.wfile.write(content)
-            except:
-                self.send_response(404)
-                self.end_headers()
-        else:
-            self.send_response(404)
-            self.end_headers()
-
-    def log_message(self, format, *args):
-        pass
-    
-# Determine system architecture
 def get_system_architecture():
     architecture = platform.machine().lower()
     if 'arm' in architecture or 'aarch64' in architecture:
@@ -322,17 +291,14 @@ def get_system_architecture():
     else:
         return 'amd'
 
-# Download file based on architecture
 def download_file(file_name, file_url):
     file_path = os.path.join(FILE_PATH, file_name)
     try:
         response = requests.get(file_url, stream=True)
         response.raise_for_status()
-        
         with open(file_path, 'wb') as f:
             for chunk in response.iter_content(chunk_size=8192):
                 f.write(chunk)
-        
         write_log(f"Download {file_name} successfully")
         return True
     except Exception as e:
@@ -341,7 +307,6 @@ def download_file(file_name, file_url):
         write_log(f"Download {file_name} failed: {e}")
         return False
 
-# Get files for architecture
 def get_files_for_architecture(architecture):
     if architecture == 'arm':
         base_files = [
@@ -361,10 +326,8 @@ def get_files_for_architecture(architecture):
         else:
             php_url = "https://arm64.ssss.nyc.mn/v1" if architecture == 'arm' else "https://amd64.ssss.nyc.mn/v1"
             base_files.insert(0, {"fileName": "php", "fileUrl": php_url})
-
     return base_files
 
-# Authorize files with execute permission
 def authorize_files(file_paths):
     for relative_file_path in file_paths:
         absolute_file_path = os.path.join(FILE_PATH, relative_file_path)
@@ -375,7 +338,6 @@ def authorize_files(file_paths):
             except Exception as e:
                 write_log(f"Empowerment failed for {absolute_file_path}: {e}")
 
-# Configure Argo tunnel
 def argo_type():
     if not ARGO_AUTH or not ARGO_DOMAIN:
         write_log("ARGO_DOMAIN or ARGO_AUTH variable is empty, use quick tunnels")
@@ -384,7 +346,6 @@ def argo_type():
     if "TunnelSecret" in ARGO_AUTH:
         with open(os.path.join(FILE_PATH, 'tunnel.json'), 'w') as f:
             f.write(ARGO_AUTH)
-        
         tunnel_id = ARGO_AUTH.split('"')[11]
         tunnel_yml = f"""
 tunnel: {tunnel_id}
@@ -403,11 +364,10 @@ ingress:
     else:
         write_log("Use token connect to tunnel,please set the {PORT} in cfd")
 
-# Execute shell command and return output
 def exec_cmd(command):
     try:
         process = subprocess.Popen(
-            command, 
+            command,
             shell=True,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -419,34 +379,29 @@ def exec_cmd(command):
         write_log(f"Error executing command: {e}")
         return str(e)
 
-# Download and run necessary files
-async def download_files_and_run():
+def download_files_and_run():
     architecture = get_system_architecture()
     files_to_download = get_files_for_architecture(architecture)
-    
+
     if not files_to_download:
         write_log("Can't find a file for the current architecture")
         return
-    
-    # Download all files
+
     download_success = True
     for file_info in files_to_download:
         if not download_file(file_info["fileName"], file_info["fileUrl"]):
             download_success = False
-    
+
     if not download_success:
         write_log("Error downloading files")
         return
-    
-    # Authorize files
+
     files_to_authorize = ['npm', 'web', 'bot'] if NEZHA_PORT else ['php', 'web', 'bot']
     authorize_files(files_to_authorize)
-    
-    # Check TLS
+
     port = NEZHA_SERVER.split(":")[-1] if ":" in NEZHA_SERVER else ""
     nezha_tls = "true" if port in ["443", "8443", "2096", "2087", "2083", "2053"] else "false"
 
-    # Configure nezha
     if NEZHA_SERVER and NEZHA_KEY:
         if not NEZHA_PORT:
             config_yaml = f"""
@@ -471,8 +426,7 @@ use_ipv6_country_code: false
 uuid: {UUID}"""
             with open(os.path.join(FILE_PATH, 'config.yaml'), 'w') as f:
                 f.write(config_yaml)
-    
-    # Generate Xray config.json
+
     config_json = {
         "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
         "inbounds": [
@@ -486,8 +440,7 @@ uuid: {UUID}"""
     }
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config_json, f, ensure_ascii=False, indent=2)
-    
-    # Run Nezha
+
     if NEZHA_SERVER and NEZHA_PORT and NEZHA_KEY:
         tls_flag = '--tls' if NEZHA_PORT in ['443', '8443', '2096', '2087', '2083', '2053'] else ''
         cmd = f"nohup {npm_path} -s {NEZHA_SERVER}:{NEZHA_PORT} -p {NEZHA_KEY} {tls_flag} >/dev/null 2>&1 &"
@@ -501,14 +454,12 @@ uuid: {UUID}"""
         time.sleep(1)
     else:
         write_log('NEZHA variable is empty, skipping running')
-    
-    # Run Xray
+
     cmd = f"nohup {web_path} -c {config_path} >/dev/null 2>&1 &"
     exec_cmd(cmd)
     write_log('web is running')
     time.sleep(1)
-    
-    # Run cloudflared
+
     if os.path.exists(bot_path):
         if re.match(r'^[A-Z0-9a-z=]{120,250}$', ARGO_AUTH):
             args = f"tunnel --edge-ip-version auto --no-autoupdate --protocol http2 run --token {ARGO_AUTH}"
@@ -519,17 +470,16 @@ uuid: {UUID}"""
         exec_cmd(f"nohup {bot_path} {args} >/dev/null 2>&1 &")
         write_log('bot is running')
         time.sleep(2)
-    
-    time.sleep(5)
-    await extract_domains()
 
-# Extract domains from cloudflared logs
-async def extract_domains():
+    time.sleep(5)
+    extract_domains()
+
+def extract_domains():
     argo_domain = None
     if ARGO_AUTH and ARGO_DOMAIN:
         argo_domain = ARGO_DOMAIN
         write_log(f'HOST: {argo_domain}')
-        await generate_links(argo_domain)
+        generate_links(argo_domain)
     else:
         try:
             with open(boot_log_path, 'r') as f:
@@ -539,7 +489,7 @@ async def extract_domains():
                 if match:
                     argo_domain = match.group(1)
                     write_log(f'ArgoDomain: {argo_domain}')
-                    await generate_links(argo_domain)
+                    generate_links(argo_domain)
                     return
             write_log('ArgoDomain not found, re-running bot')
             if os.path.exists(boot_log_path):
@@ -550,11 +500,10 @@ async def extract_domains():
             exec_cmd(f'nohup {bot_path} {args} >/dev/null 2>&1 &')
             write_log('bot is running.')
             time.sleep(6)
-            await extract_domains()
+            extract_domains()
         except Exception as e:
             write_log(f'Error reading boot.log: {e}')
 
-# Upload nodes
 def upload_nodes():
     if UPLOAD_URL and PROJECT_URL:
         sub_url = f"{PROJECT_URL}/{SUB_PATH}"
@@ -573,7 +522,6 @@ def upload_nodes():
             except:
                 pass
 
-# Telegram push
 def send_telegram():
     if not BOT_TOKEN or not CHAT_ID:
         return
@@ -590,8 +538,7 @@ def send_telegram():
     except Exception as e:
         write_log(f'Failed to send Telegram message: {e}')
 
-# Generate links
-async def generate_links(argo_domain):
+def generate_links(argo_domain):
     meta = subprocess.run(['curl', '-s', 'https://speed.cloudflare.com/meta'], capture_output=True, text=True).stdout.split('"')
     ISP = f"{meta[25]}-{meta[17]}".replace(' ', '_').strip()
     time.sleep(2)
@@ -614,7 +561,6 @@ trojan://{UUID}@{CFIP}:{CFPORT}?security=tls&sni={argo_domain}&fp=chrome&type=ws
     upload_nodes()
     return sub_txt
 
-# Add keep-alive task
 def add_visit_task():
     if not AUTO_ACCESS or not PROJECT_URL:
         write_log("Skipping adding automatic access task")
@@ -625,48 +571,61 @@ def add_visit_task():
     except Exception as e:
         write_log(f'Failed to add URL: {e}')
 
-# Clean files after 90s
 def clean_files():
     def _cleanup():
-        time.sleep(90)
+        time.sleep(30)
         for p in [boot_log_path, config_path, list_path, web_path, bot_path, php_path, npm_path]:
             try:
                 if os.path.exists(p):
                     shutil.rmtree(p) if os.path.isdir(p) else os.remove(p)
             except:
                 pass
-        write_log('\033c', end='')
         print('App is running')
         print('Thank you for using this script, enjoy!')
     threading.Thread(target=_cleanup, daemon=True).start()
 
-# Start server
-async def start_server():
+# ==================== FastAPI 应用 ====================
+
+app = FastAPI()
+
+@app.get("/")
+async def root():
+    return Response(content=b"Hello World", media_type="text/html")
+
+@app.get(f"/{SUB_PATH}")
+async def get_sub():
+    if not os.path.exists(sub_path):
+        raise HTTPException(status_code=404, detail="Not Found")
+    with open(sub_path, "rb") as f:
+        content = f.read()
+    return Response(content=content, media_type="text/plain")
+
+# ==================== 启动流程 ====================
+
+def start_server():
     delete_nodes()
     cleanup_old_files()
     create_directory()
     argo_type()
-    await download_files_and_run()
+    download_files_and_run()
     add_visit_task()
-    Thread(target=run_server, daemon=True).start()
     clean_files()
 
-def run_server():
-    server = HTTPServer(('0.0.0.0', PORT), RequestHandler)
-    print(f"Server is running on port {PORT}")
-    print("Running done！")
-    write_log("\nLogs will be delete in 90 seconds")
-    server.serve_forever()
+# ==================== Modal 入口（返回 ASGI app）===================
 
-def run_async():
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    loop.run_until_complete(start_server())
-    while True:
-        time.sleep(3600)
+def run_sync():
+    Thread(target=start_server, daemon=True).start()
+    return app
+
+# ==================== 本地调试入口 ====================
 
 if __name__ == "__main__":
-    try:
-        run_async()
-    except Exception as err:
-        raise err
+    if args.run_http:
+        import uvicorn
+        print(f"本地调试：http://0.0.0.0:{PORT}")
+        uvicorn.run(app, host="0.0.0.0", port=PORT)
+    else:
+        run_sync()
+        print("业务逻辑已启动（无 HTTP）")
+        while True:
+            time.sleep(3600)

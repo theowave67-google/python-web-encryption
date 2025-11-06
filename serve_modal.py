@@ -1,0 +1,29 @@
+from pathlib import Path
+import modal
+
+web_script_local_path = Path(__file__).parent / "app.py"
+web_script_remote_path = "/root/app.py"
+
+image = (
+    modal.Image.debian_slim(python_version="3.11")
+    .apt_install("curl", "ca-certificates")
+    .pip_install_from_requirements("requirements.txt")
+    .add_local_file("data.json.enc", "/root/data.json.enc")
+    .add_local_file(web_script_local_path, web_script_remote_path)
+)
+
+app = modal.App("web", image=image)
+
+@app.function(
+    min_containers=1,
+    scaledown_window=60,
+    buffer_containers=0,
+    timeout=3600,
+    cpu=1.0,
+    memory=512,
+)
+@modal.concurrent(max_inputs=100)
+@modal.asgi_app()  # 关键：返回 ASGI 应用
+def run():
+    from app import run_sync
+    return run_sync()  # 返回 FastAPI 实例

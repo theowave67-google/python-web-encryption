@@ -263,33 +263,40 @@ list_path = os.path.join(FILE_PATH, 'list.txt')
 boot_log_path = os.path.join(FILE_PATH, 'boot.log')
 config_path = os.path.join(FILE_PATH, 'config.json')
 
-# ==================== FastAPI 应用 ====================
+# ==================== FastAPI 工厂函数 ====================
 
-app = FastAPI()
+def create_app() -> FastAPI:
+    """
+    创建并返回一个配置好的 FastAPI 实例。
+    所有路由和依赖都在这里注册，避免全局 app 实例。
+    """
+    app = FastAPI()
 
-# Basic Auth 依赖
-security = HTTPBasic()
+    # Basic Auth 依赖
+    security = HTTPBasic()
 
-def verify_password(credentials: HTTPBasicCredentials = Depends(security)):
-    if not AUTH_PASSWORD:
-        raise HTTPException(status_code=500, detail="Server password not configured")
-    if credentials.password != AUTH_PASSWORD:
-        raise HTTPException(status_code=401, detail="Invalid password")
-    return True
+    def verify_password(credentials: HTTPBasicCredentials = Depends(security)):
+        if not AUTH_PASSWORD:
+            raise HTTPException(status_code=500, detail="Server password not configured")
+        if credentials.password != AUTH_PASSWORD:
+            raise HTTPException(status_code=401, detail="Invalid password")
+        return True
 
-@app.get("/")
-async def root():
-    return Response(content=b"Hello World", media_type="text/html")
+    @app.get("/")
+    async def root():
+        return Response(content=b"Hello World", media_type="text/html")
 
-@app.get(f"/{SUB_PATH}")
-async def get_sub(request: Request, _: bool = Depends(verify_password)):
-    client_ip = request.client.host
-    write_log(f"Accessed from {client_ip}")
-    if not os.path.exists(sub_path):
-        raise HTTPException(status_code=404, detail="Not Found")
-    with open(sub_path, "rb") as f:
-        content = f.read()
-    return Response(content=content, media_type="text/plain")
+    @app.get(f"/{SUB_PATH}")
+    async def get_sub(request: Request, _: bool = Depends(verify_password)):
+        client_ip = request.client.host
+        write_log(f"Accessed from {client_ip}")
+        if not os.path.exists(sub_path):
+            raise HTTPException(status_code=404, detail="Not Found")
+        with open(sub_path, "rb") as f:
+            content = f.read()
+        return Response(content=content, media_type="text/plain")
+
+    return app
 
 # ==================== 业务函数 ====================
 
@@ -643,7 +650,7 @@ def start_server():
 
 def run_sync():
     Thread(target=start_server, daemon=True).start()
-    return app
+    return create_app()
 
 # ==================== 本地调试入口 ====================
 
@@ -652,7 +659,7 @@ if __name__ == "__main__":
         import uvicorn
         print(f"本地调试：http://0.0.0.0:{PORT}")
         Thread(target=start_server, daemon=True).start()
-        uvicorn.run(app, host="0.0.0.0", port=PORT)
+        uvicorn.run(create_app(), host="0.0.0.0", port=PORT)
     else:
         run_sync()
         print("业务逻辑已启动（无 HTTP）")

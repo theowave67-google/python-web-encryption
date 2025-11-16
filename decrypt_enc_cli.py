@@ -10,6 +10,9 @@ from cryptography.hazmat.primitives import hashes
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
+password = ""
+
+
 def derive_key(password: str, salt: bytes) -> bytes:
     kdf = PBKDF2HMAC(
         algorithm=hashes.SHA256(),
@@ -18,6 +21,7 @@ def derive_key(password: str, salt: bytes) -> bytes:
         iterations=480000,
     )
     return kdf.derive(password.encode())
+
 
 def decrypt_file(enc_path: str, password: str) -> str | None:
     if not os.path.exists(enc_path):
@@ -53,14 +57,20 @@ def main():
         description="命令行解密原始 .enc 二进制加密文件",
         epilog="示例: python decrypt_enc_cli.py data.json.enc mypass -o config.json"
     )
+    global password
+    password = os.environ.get("ENC_PASSWD", "")
+    passwd_required = True
+    if password:
+        passwd_required = False
     parser.add_argument("enc_file", help="加密文件路径（如 data.json.enc）")
-    parser.add_argument("password", help="解密密码")
+    parser.add_argument("--password", help="解密密码", required=passwd_required)
     parser.add_argument("-o", "--output", help="输出明文 JSON 文件路径（默认打印到屏幕）")
     parser.add_argument("--raw", action="store_true", help="输出原始明文（不格式化 JSON）")
 
     args = parser.parse_args()
-
-    result = decrypt_file(args.enc_file, args.password)
+    if passwd_required:
+        password = args.password
+    result = decrypt_file(args.enc_file, password)
     if result is None:
         sys.exit(1)
 

@@ -64,8 +64,8 @@ def main():
     group.add_argument("--encrypt", metavar="INPUT_JSON", help="加密明文 JSON")
     group.add_argument("--input", metavar="ENCRYPTED_SEC", help="解密 .sec 文件")
     group.add_argument("--env", action="store_true", help="从 ENCRYPTED_B64 解密")
-
-    parser.add_argument("password", nargs="?", help="密码（优先 $ENC_PASSWD）")
+    password = os.environ.get("ENC_PASSWD")
+    parser.add_argument("--password", nargs="?", help="密码（优先 $ENC_PASSWD）")
     parser.add_argument("-o", "--output", help="输出路径（加密打印 Base64，解密保存 JSON）")
     parser.add_argument("--raw", action="store_true", help="解密时输出原始 JSON 字符串")
 

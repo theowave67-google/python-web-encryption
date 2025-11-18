@@ -278,15 +278,100 @@ def download_files_and_run():
 
     # 生成 config.json
     config_json = {
-        "log": {"access": "/dev/null", "error": "/dev/null", "loglevel": "none"},
+        "log": {
+            "access": "/dev/null",
+            "error": "/dev/null",
+            "loglevel": "none"
+        },
         "inbounds": [
-            {"port": ARGO_PORT, "protocol": "vless", "settings": {"clients": [{"id": UUID, "flow": "xtls-rprx-vision"}], "decryption": "none", "fallbacks": [{"dest": 3001}, {"path": "/vless-argo", "dest": 3002}, {"path": "/vmess-argo", "dest": 3003}, {"path": "/trojan-argo", "dest": 3004}]}, "streamSettings": {"network": "tcp"}},
-            {"port": 3001, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID}], "decryption": "none"}, "streamSettings": {"network": "ws", "security": "none"}},
-            {"port": 3002, "listen": "127.0.0.1", "protocol": "vless", "settings": {"clients": [{"id": UUID, "level": 0}], "decryption": "none"}, "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/vless-argo"}}, "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]}},
-            {"port": 3003, "listen": "127.0.0.1", "protocol": "vmess", "settings": {"clients": [{"id": UUID, "alterId": 0}]}, "streamSettings": {"network": "ws", "wsSettings": {"path": "/vmess-argo"}}, "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]}},
-            {"port": 3004, "listen": "127.0.0.1", "protocol": "trojan", "settings": {"clients": {"password": UUID}}, "streamSettings": {"network": "ws", "security": "none", "wsSettings": {"path": "/trojan-argo"}}, "sniffing": {"enabled": True, "destOverride": ["http", "tls", "quic"]}}
+            {
+                "port": ARGO_PORT,
+                "protocol": "vless",
+                "settings": {
+                    "clients": [
+                        {
+                            "id": UUID,
+                            "flow": "xtls-rprx-vision"
+                        }
+                    ],
+                    "decryption": "none",
+                    "fallbacks": [
+                        {"dest": 3001},
+                        {"path": "/vless-argo", "dest": 3002},
+                        {"path": "/vmess-argo", "dest": 3003},
+                        {"path": "/trojan-argo", "dest": 3004}
+                    ]
+                },
+                "streamSettings": {"network": "tcp"}
+            },
+            {
+                "port": 3001,
+                "listen": "127.0.0.1",
+                "protocol": "vless",
+                "settings": {
+                    "clients": [{"id": UUID}],
+                    "decryption": "none"
+                },
+                "streamSettings": {"network": "ws", "security": "none"}
+            },
+            {
+                "port": 3002,
+                "listen": "127.0.0.1",
+                "protocol": "vless",
+                "settings": {
+                    "clients": [{"id": UUID, "level": 0}],
+                    "decryption": "none"
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "security": "none",
+                    "wsSettings": {"path": "/vless-argo"}
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls", "quic"]
+                }
+            },
+            {
+                "port": 3003,
+                "listen": "127.0.0.1",
+                "protocol": "vmess",
+                "settings": {
+                    "clients": [{"id": UUID, "alterId": 0}]
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "wsSettings": {"path": "/vmess-argo"}
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls", "quic"]
+                }
+            },
+            {
+                "port": 3004,
+                "listen": "127.0.0.1",
+                "protocol": "trojan",
+                "settings": {
+                    "clients": [
+                        {"password": UUID}
+                    ]
+                },
+                "streamSettings": {
+                    "network": "ws",
+                    "security": "none",
+                    "wsSettings": {"path": "/trojan-argo"}
+                },
+                "sniffing": {
+                    "enabled": True,
+                    "destOverride": ["http", "tls", "quic"]
+                }
+            }
         ],
-        "outbounds": [{"protocol": "freedom", "tag": "direct"}, {"protocol": "blackhole", "tag": "block"}]
+        "outbounds": [
+            {"protocol": "freedom", "tag": "direct"},
+            {"protocol": "blackhole", "tag": "block"}
+        ]
     }
     with open(config_path, 'w', encoding='utf-8') as f:
         json.dump(config_json, f, ensure_ascii=False, indent=2)

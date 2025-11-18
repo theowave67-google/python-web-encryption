@@ -2,59 +2,59 @@ name: Build and Push Docker Image
 
 on:
   push:
-    branches: [ release ]     
-    tags: [ 'v*.*.*' ]              # 可选：打 release 标签时也触发
+    branches: [ release ]          # 你只在 release 分支推送时构建
+    tags: [ 'v*.*.*' ]             # tag 如 v1.2.3 时也触发
   pull_request:
-    branches: [ main, master ]
+    branches: [ main, master ]     # PR 时只跑 build，不 push
 
 jobs:
   build-and-push:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      packages: write         # 如果推到 GitHub Packages 需要这个
+      packages: write               # 必须有这个才能写 GHCR
 
     steps:
-      # 1. 拉代码
       - name: Checkout
         uses: actions/checkout@v4
 
-      # 2. 设置 QEMU（支持 multi-arch，可选，如果你只跑 amd64 可以删）
+      # 可选：只建 amd64 就删掉下面两行（体积和速度都更快）
       - name: Set up QEMU
         uses: docker/setup-qemu-action@v3
 
-      # 3. 设置 Docker Buildx（支持多平台和更好的缓存）
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
-      # 4. 登录 ghcr.io
-      registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
+      # 正确登录 GHCR 的写法
+      - name: Login to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
 
-      # 5. 生成镜像标签
-      - name: Generate tags
+      # 自动生成镜像完整名称和标签（推荐方式）
+      - name: Docker meta
         id: meta
-        run: |
-          SHA=$(echo ${GITHUB_SHA} | cut -c1-8)
-          REF=${GITHUB_REF#refs/*/}
-          echo "sha=$SHA" >> $GITHUB_OUTPUT
-          echo "ref=$REF" >> $GITHUB_OUTPUT
-          echo "tags=type=raw,value=latest
-          type=sha,format=short,prefix=
-          type=ref,event=branch
-          type=semver,pattern={{version}}" >> $GITHUB_OUTPUT
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=raw,value=latest,enable={{is_default_branch}}
+            type=ref,event=branch
+            type=ref,event=pr
+            type=sha,format=short
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
 
-      # 6. Build & Push（关键：开启缓存，体积最小）
+      # 构建并推送
       - name: Build and push
         uses: docker/build-push-action@v6
         with:
           context: .
-          platforms: linux/amd64,linux/arm64   # 如果只跑 amd64 改成 linux/amd64
-          push: true
-          tags: |
-            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:latest
-            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:${{ steps.meta.outputs.sha }}
-            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:${{ steps.meta.outputs.ref }}
+          platforms: linux/amd64,linux/arm64   # 只想 amd64 改成 linux/amd64
+          push: ${{ github.event_name != 'pull_request' }}  # PR 只 build 不 push
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max

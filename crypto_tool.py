@@ -55,6 +55,9 @@ def main():
 
 解密环境变量:
   ENCRYPTED_B64=xxx python decrypt_tool.py --env $PASS -o out.json
+
+查看加密文件明文:
+  ENC_PASSWD=xxx python decrypt_tool.py --input encrypted.sec
         """,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )

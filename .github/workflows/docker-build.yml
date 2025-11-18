@@ -1,0 +1,60 @@
+name: Build and Push Docker Image
+
+on:
+  push:
+    branches: [ release ]     
+    tags: [ 'v*.*.*' ]              # 可选：打 release 标签时也触发
+  pull_request:
+    branches: [ main, master ]
+
+jobs:
+  build-and-push:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write         # 如果推到 GitHub Packages 需要这个
+
+    steps:
+      # 1. 拉代码
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # 2. 设置 QEMU（支持 multi-arch，可选，如果你只跑 amd64 可以删）
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      # 3. 设置 Docker Buildx（支持多平台和更好的缓存）
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      # 4. 登录 ghcr.io
+      registry: ghcr.io
+        username: ${{ github.actor }}
+        password: ${{ secrets.GITHUB_TOKEN }}
+
+      # 5. 生成镜像标签
+      - name: Generate tags
+        id: meta
+        run: |
+          SHA=$(echo ${GITHUB_SHA} | cut -c1-8)
+          REF=${GITHUB_REF#refs/*/}
+          echo "sha=$SHA" >> $GITHUB_OUTPUT
+          echo "ref=$REF" >> $GITHUB_OUTPUT
+          echo "tags=type=raw,value=latest
+          type=sha,format=short,prefix=
+          type=ref,event=branch
+          type=semver,pattern={{version}}" >> $GITHUB_OUTPUT
+
+      # 6. Build & Push（关键：开启缓存，体积最小）
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64   # 如果只跑 amd64 改成 linux/amd64
+          push: true
+          tags: |
+            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:latest
+            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:${{ steps.meta.outputs.sha }}
+            ${{ secrets.DOCKERHUB_USERNAME }}/your-app-name:${{ steps.meta.outputs.ref }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

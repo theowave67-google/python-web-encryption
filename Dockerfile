@@ -15,9 +15,8 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # 再复制应用文件
-COPY app.py .
-COPY zeabur-data/ zeabur-data/
+COPY app2.py app.py
 
 EXPOSE 8000
 
-CMD ["python", "app.py", "--encrypted", "xxx", "--run-http"]
+CMD ["python", "app.py", "--run-http"]

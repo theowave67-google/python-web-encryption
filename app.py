@@ -86,7 +86,6 @@ DEFAULT_CONFIG = {
 # ==================== 命令行参数 ====================
 parser = argparse.ArgumentParser(description="运行服务（只解密配置）")
 parser.add_argument('--input', help='指定 .sec 加密文件路径', default='data.enc')
-parser.add_argument('--run-http', action='store_true', help='启动 HTTP 服务')
 args = parser.parse_args()
 
 # ==================== 加载配置 ====================
@@ -139,6 +138,7 @@ CHAT_ID     = config['CHAT_ID']
 BOT_TOKEN   = config['BOT_TOKEN']
 PORT        = int(config.get('SERVER_PORT'))
 AUTH_ACCESS = config.get('AUTH_ACCESS', 'FF888.')
+RUN_HTTP    = config.get('RUN_HTTP', 'false').lower() == 'true'
 
 # ==================== 路径 ====================
 web_path      = os.path.join(FILE_PATH, 'web')
@@ -592,7 +592,7 @@ def start_server():
 # ==================== 主程序 ====================
 if __name__ == "__main__":
     print(f"配置加载成功")
-    if args.run_http:
+    if RUN_HTTP:
         import uvicorn
         Thread(target=start_server, daemon=True).start()
         uvicorn.run(create_app(), host="0.0.0.0", port=PORT)
